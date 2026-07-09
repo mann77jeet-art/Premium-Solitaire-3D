@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Klondike Solitaire — Premium 3D</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-theme="dark">
+
+  <!-- ================= TOP BAR ================= -->
+  <header class="topbar">
+    <button id="btnMenu" class="icon-btn" title="Menu" aria-label="Menu">
+      <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    </button>
+
+    <div class="brand">
+      <span class="brand-suit">♠</span>
+      <span class="brand-text">Klondike</span>
+    </div>
+
+    <div class="hud">
+      <div class="hud-item"><span class="hud-label">Score</span><span id="hudScore" class="hud-value">0</span></div>
+      <div class="hud-item"><span class="hud-label">Moves</span><span id="hudMoves" class="hud-value">0</span></div>
+      <div class="hud-item"><span class="hud-label">Time</span><span id="hudTime" class="hud-value">00:00</span></div>
+    </div>
+
+    <div class="quick-actions">
+      <button id="btnUndo" class="icon-btn" title="Undo"><svg viewBox="0 0 24 24"><path d="M9 14l-4-4 4-4M5 10h9a5 5 0 0 1 0 10h-1"/></svg></button>
+      <button id="btnHint" class="icon-btn" title="Hint"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.5.4.9 1 .9 1.7v.5h5.4v-.5c0-.7.4-1.3.9-1.7A6 6 0 0 0 12 3z"/></svg></button>
+    </div>
+  </header>
+
+  <!-- ================= GAME BOARD ================= -->
+  <main id="board" class="board">
+
+    <div class="top-row">
+      <div class="pile-group">
+        <div id="slot-stock" class="slot stock-slot" data-pile="stock">
+          <span class="slot-icon">↺</span>
+        </div>
+        <div id="slot-waste" class="slot waste-slot" data-pile="waste"></div>
+      </div>
+
+      <div class="pile-group foundations">
+        <div id="slot-foundation-S" class="slot foundation-slot" data-pile="foundation-S"><span class="slot-icon">♠</span></div>
+        <div id="slot-foundation-H" class="slot foundation-slot" data-pile="foundation-H"><span class="slot-icon">♥</span></div>
+        <div id="slot-foundation-D" class="slot foundation-slot" data-pile="foundation-D"><span class="slot-icon">♦</span></div>
+        <div id="slot-foundation-C" class="slot foundation-slot" data-pile="foundation-C"><span class="slot-icon">♣</span></div>
+      </div>
+    </div>
+
+    <div class="tableau-row">
+      <div id="slot-tableau-0" class="slot tableau-slot" data-pile="tableau-0"></div>
+      <div id="slot-tableau-1" class="slot tableau-slot" data-pile="tableau-1"></div>
+      <div id="slot-tableau-2" class="slot tableau-slot" data-pile="tableau-2"></div>
+      <div id="slot-tableau-3" class="slot tableau-slot" data-pile="tableau-3"></div>
+      <div id="slot-tableau-4" class="slot tableau-slot" data-pile="tableau-4"></div>
+      <div id="slot-tableau-5" class="slot tableau-slot" data-pile="tableau-5"></div>
+      <div id="slot-tableau-6" class="slot tableau-slot" data-pile="tableau-6"></div>
+    </div>
+
+    <div id="cardLayer" class="card-layer"></div>
+  </main>
+
+  <!-- Auto-complete floating button -->
+  <button id="btnAutoComplete" class="fab hidden" title="Auto Complete">
+    <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+    <span>Auto Finish</span>
+  </button>
+
+  <!-- ================= SIDE MENU ================= -->
+  <div id="menuOverlay" class="overlay hidden">
+    <aside id="sideMenu" class="side-menu">
+      <div class="side-menu-header">
+        <span>Menu</span>
+        <button id="btnCloseMenu" class="icon-btn small"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+
+      <div class="menu-section">
+        <button class="menu-btn primary" id="btnNewGame">New Game</button>
+        <button class="menu-btn" id="btnRestart">Restart Deal</button>
+      </div>
+
+      <div class="menu-section">
+        <div class="menu-row">
+          <span>Draw Mode</span>
+          <div class="segmented" id="drawModeToggle">
+            <button data-mode="1" class="seg-btn active">Draw 1</button>
+            <button data-mode="3" class="seg-btn">Draw 3</button>
+          </div>
+        </div>
+        <div class="menu-row">
+          <span>Theme</span>
+          <div class="segmented" id="themeToggle">
+            <button data-theme="dark" class="seg-btn active">Dark</button>
+            <button data-theme="light" class="seg-btn">Light</button>
+          </div>
+        </div>
+        <div class="menu-row">
+          <span>Sound</span>
+          <label class="switch">
+            <input type="checkbox" id="soundToggle" checked>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="menu-section">
+        <button class="menu-btn" id="btnStats">Statistics</button>
+        <button class="menu-btn" id="btnHowTo">How To Play</button>
+      </div>
+
+      <div class="menu-footer">Premium 3D Klondike Solitaire</div>
+    </aside>
+  </div>
+
+  <!-- ================= MODALS ================= -->
+  <div id="modalOverlay" class="overlay hidden">
+    <div class="modal-box" id="modalBox">
+      <button class="modal-close" id="btnModalClose"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      <div id="modalContent" class="modal-content"></div>
+    </div>
+  </div>
+
+  <!-- Confetti layer -->
+  <div id="confettiLayer" class="confetti-layer"></div>
+
+  <!-- toast -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
