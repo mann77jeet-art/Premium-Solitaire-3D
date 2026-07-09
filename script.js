@@ -579,4 +579,501 @@
 
     drag.startTime = Date.now();
     drag.moved = false;
-    drag.sta
+    drag.startX = e.clientX;
+    drag.startY = e.clientY;
+    drag.pointerId = e.pointerId;
+    drag.sourceLoc = loc;
+    drag.ids = [];
+
+    let group = [];
+    if (loc.pile === 'tableau') {
+      if (!card.faceUp) return;
+      group = loc.arr.slice(loc.index);
+      if (!group.every(c => c.faceUp) || !isValidSequence(group)) return;
+    } else if (loc.pile === 'waste') {
+      if (loc.index !== loc.arr.length - 1) return;
+      group = [card];
+    } else if (loc.pile === 'foundation') {
+      if (loc.index !== loc.arr.length - 1) return;
+      group = [card];
+    } else {
+      return; // stock handled via click
+    }
+
+    drag.ids = group.map(c => c.id);
+    drag.active = true;
+
+    const firstEl = cardEls[drag.ids[0]];
+    const match = firstEl.style.transform.match(/-?\d+\.?\d*/g);
+    drag.originX = match ? parseFloat(match[0]) : 0;
+    drag.originY = match ? parseFloat(match[1]) : 0;
+
+    drag.ids.forEach((cid, i) => {
+      const el = cardEls[cid];
+      el.classList.add('dragging');
+      el.style.zIndex = 9000 + i;
+      el.style.pointerEvents = 'none';
+    });
+
+    try { cardEl.setPointerCapture(e.pointerId); } catch (err) {}
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+  }
+
+  function onPointerMove(e) {
+    if (!drag.active) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) drag.moved = true;
+    const ch = parseFloat(getCssVar('--ch'));
+    drag.ids.forEach((cid, i) => {
+      const el = cardEls[cid];
+      el.style.transform = `translate(${drag.originX + dx}px, ${drag.originY + dy + i * (ch * 0.24)}px)`;
+    });
+  }
+
+  function onPointerUp(e) {
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', onPointerUp);
+    if (!drag.active) return;
+
+    const wasQuickTap = !drag.moved && (Date.now() - drag.startTime) < 300;
+
+    drag.ids.forEach(cid => {
+      const el = cardEls[cid];
+      el.classList.remove('dragging');
+      el.style.pointerEvents = '';
+    });
+
+    if (wasQuickTap) {
+      drag.active = false;
+      attemptAutoMove(drag.ids[0]);
+      render();
+      return;
+    }
+
+    // Determine drop target
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    const pileEl = target ? target.closest('[data-pile]') : null;
+    let handled = false;
+
+    if (pileEl) {
+      const pileKey = pileEl.dataset.pile;
+      const group = drag.ids.map(id => allCards[id]);
+      const firstCard = group[0];
+
+      if (pileKey.startsWith('tableau-')) {
+        const col = parseInt(pileKey.split('-')[1], 10);
+        const targetArr = game.tableau[col];
+        const top = targetArr[targetArr.length - 1];
+        const isSameColumn = drag.sourceLoc.pile === 'tableau' && drag.sourceLoc.col === col;
+        if (!isSameColumn && canStackTableau(firstCard, top)) {
+          moveGroupToTableau(group, drag.sourceLoc, col);
+          handled = true;
+        }
+      } else if (pileKey.startsWith('foundation-') && group.length === 1) {
+        const suit = pileKey.split('-')[1];
+        if (suit === firstCard.suit && canStackFoundation(firstCard, game.foundations[suit])) {
+          moveCardToFoundation(firstCard, drag.sourceLoc);
+          handled = true;
+        }
+      }
+    }
+
+    drag.active = false;
+
+    if (!handled) {
+      sfx.invalid();
+      render(); // snap back
+    }
+  }
+
+  /* ---------------------------------------------------------
+     DOUBLE CLICK
+  --------------------------------------------------------- */
+  function onDblClick(e) {
+    const cardEl = e.target.closest('.card');
+    if (!cardEl) return;
+    attemptAutoMove(cardEl.dataset.id);
+  }
+
+  /* ---------------------------------------------------------
+     STOCK CLICK
+  --------------------------------------------------------- */
+  function onSlotClick(e) {
+    const slot = e.target.closest('[data-pile]');
+    if (!slot) return;
+    if (slot.dataset.pile === 'stock') drawFromStock();
+  }
+
+  /* ---------------------------------------------------------
+     HINT
+  --------------------------------------------------------- */
+  function findHint() {
+    // waste -> foundation
+    if (game.waste.length) {
+      const c = game.waste[game.waste.length - 1];
+      if (canStackFoundation(c, game.foundations[c.suit])) return { from: cardEls[c.id], to: document.getElementById('slot-foundation-' + c.suit) };
+    }
+    // tableau top -> foundation
+    for (let col = 0; col < 7; col++) {
+      const arr = game.tableau[col];
+      if (arr.length) {
+        const c = arr[arr.length - 1];
+        if (c.faceUp && canStackFoundation(c, game.foundations[c.suit])) {
+          return { from: cardEls[c.id], to: document.getElementById('slot-foundation-' + c.suit) };
+        }
+      }
+    }
+    // waste -> tableau
+    if (game.waste.length) {
+      const c = game.waste[game.waste.length - 1];
+      for (let col = 0; col < 7; col++) {
+        const top = game.tableau[col][game.tableau[col].length - 1];
+        if (canStackTableau(c, top)) return { from: cardEls[c.id], to: document.getElementById('slot-tableau-' + col) };
+      }
+    }
+    // tableau -> tableau
+    for (let col = 0; col < 7; col++) {
+      const arr = game.tableau[col];
+      const faceUpStart = arr.findIndex(c => c.faceUp);
+      if (faceUpStart === -1) continue;
+      const group = arr.slice(faceUpStart);
+      if (!isValidSequence(group)) continue;
+      for (let tcol = 0; tcol < 7; tcol++) {
+        if (tcol === col) continue;
+        const top = game.tableau[tcol][game.tableau[tcol].length - 1];
+        if (canStackTableau(group[0], top)) {
+          // avoid meaningless king-to-empty shuffle with no benefit
+          if (faceUpStart === 0 && !top) continue;
+          return { from: cardEls[group[0].id], to: document.getElementById('slot-tableau-' + tcol) };
+        }
+      }
+    }
+    // stock available
+    if (game.stock.length) return { from: document.getElementById('slot-stock'), to: null, drawHint: true };
+    if (game.waste.length) return { from: document.getElementById('slot-stock'), to: null, drawHint: true };
+    return null;
+  }
+
+  function showHint() {
+    const h = findHint();
+    if (!h) { showToast('No moves available'); return; }
+    if (h.drawHint) {
+      h.from.classList.add('hint-glow');
+      setTimeout(() => h.from.classList.remove('hint-glow'), 2000);
+      showToast('Draw from the stock pile');
+      return;
+    }
+    h.from.classList.add('hint-glow');
+    if (h.to) h.to.classList.add('hint-glow');
+    setTimeout(() => {
+      h.from.classList.remove('hint-glow');
+      if (h.to) h.to.classList.remove('hint-glow');
+    }, 2000);
+  }
+
+  /* ---------------------------------------------------------
+     AUTO COMPLETE
+  --------------------------------------------------------- */
+  function canAutoComplete() {
+    return game.tableau.every(col => col.every(c => c.faceUp));
+  }
+  function updateAutoCompleteVisibility() {
+    const btn = document.getElementById('btnAutoComplete');
+    if (!game.won && canAutoComplete() && (game.stock.length + game.waste.length + game.tableau.flat().length) > 0 && game.tableau.flat().length > 0) {
+      btn.classList.remove('hidden');
+    } else {
+      btn.classList.add('hidden');
+    }
+  }
+  function autoCompleteAll() {
+    document.getElementById('btnAutoComplete').classList.add('hidden');
+    const step = () => {
+      if (game.won) return;
+      let moved = false;
+
+      if (game.waste.length) {
+        const c = game.waste[game.waste.length - 1];
+        if (canStackFoundation(c, game.foundations[c.suit])) {
+          moveCardToFoundation(c, { pile: 'waste', index: game.waste.length - 1, arr: game.waste });
+          moved = true;
+        }
+      }
+      if (!moved) {
+        for (let col = 0; col < 7; col++) {
+          const arr = game.tableau[col];
+          if (arr.length) {
+            const c = arr[arr.length - 1];
+            if (canStackFoundation(c, game.foundations[c.suit])) {
+              moveCardToFoundation(c, { pile: 'tableau', col, index: arr.length - 1, arr });
+              moved = true;
+              break;
+            }
+          }
+        }
+      }
+      if (!moved && game.stock.length) { drawFromStock(); moved = true; }
+      if (!moved && !game.stock.length && game.waste.length) { drawFromStock(); moved = true; }
+
+      if (moved && !game.won) {
+        setTimeout(step, 130);
+      }
+    };
+    step();
+  }
+
+  /* ---------------------------------------------------------
+     WIN
+  --------------------------------------------------------- */
+  function checkWin() {
+    const total = SUITS.reduce((sum, s) => sum + game.foundations[s].length, 0);
+    if (total === 52 && !game.won) {
+      game.won = true;
+      stopTimer();
+      sfx.win();
+      recordWin();
+      clearSave();
+      spawnConfetti();
+      setTimeout(showWinModal, 500);
+    }
+  }
+
+  function spawnConfetti() {
+    const layer = document.getElementById('confettiLayer');
+    const colors = ['#e9c46a', '#4cc9a0', '#e76f51', '#f2d38a', '#8ecae6', '#f4a261'];
+    for (let i = 0; i < 140; i++) {
+      const piece = document.createElement('div');
+      piece.className = 'confetti-piece';
+      piece.style.left = Math.random() * 100 + 'vw';
+      piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+      piece.style.animationDuration = (2.2 + Math.random() * 1.8) + 's';
+      piece.style.animationDelay = (Math.random() * 0.6) + 's';
+      piece.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+      layer.appendChild(piece);
+      setTimeout(() => piece.remove(), 5000);
+    }
+  }
+
+  /* ---------------------------------------------------------
+     SAVE / LOAD GAME
+  --------------------------------------------------------- */
+  function saveGame() {
+    if (!game.started || game.won) return;
+    const data = {
+      tableau: game.tableau.map(col => col.map(c => ({ id: c.id, faceUp: c.faceUp }))),
+      foundations: Object.fromEntries(SUITS.map(s => [s, game.foundations[s].map(c => c.id)])),
+      stock: game.stock.map(c => c.id),
+      waste: game.waste.map(c => c.id),
+      drawMode: game.drawMode,
+      score: game.score,
+      moves: game.moves,
+      timeSeconds: game.timeSeconds,
+      initialOrder: game.initialOrder
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  }
+
+  function clearSave() { localStorage.removeItem(SAVE_KEY); }
+
+  function loadGame() {
+    let data;
+    try { data = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { return false; }
+    if (!data) return false;
+    try {
+      for (const id in allCards) allCards[id].faceUp = false;
+      game.tableau = data.tableau.map(col => col.map(o => { allCards[o.id].faceUp = o.faceUp; return allCards[o.id]; }));
+      game.foundations = {};
+      for (const s of SUITS) game.foundations[s] = data.foundations[s].map(id => { allCards[id].faceUp = true; return allCards[id]; });
+      game.stock = data.stock.map(id => { allCards[id].faceUp = false; return allCards[id]; });
+      game.waste = data.waste.map(id => { allCards[id].faceUp = true; return allCards[id]; });
+      game.drawMode = data.drawMode || 1;
+      game.score = data.score || 0;
+      game.moves = data.moves || 0;
+      game.timeSeconds = data.timeSeconds || 0;
+      game.initialOrder = data.initialOrder || [];
+      game.history = [];
+      game.won = false;
+      game.started = true;
+      return true;
+    } catch (e) { return false; }
+  }
+
+  /* ---------------------------------------------------------
+     UI: MODALS / MENU / TOAST
+  --------------------------------------------------------- */
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.remove('hidden');
+    requestAnimationFrame(() => t.classList.add('show'));
+    clearTimeout(showToast._timer);
+    showToast._timer = setTimeout(() => {
+      t.classList.remove('show');
+      setTimeout(() => t.classList.add('hidden'), 250);
+    }, 1800);
+  }
+
+  function openMenu() { document.getElementById('menuOverlay').classList.remove('hidden'); }
+  function closeMenu() { document.getElementById('menuOverlay').classList.add('hidden'); }
+
+  function openModal(html) {
+    document.getElementById('modalContent').innerHTML = html;
+    document.getElementById('modalOverlay').classList.remove('hidden');
+  }
+  function closeModal() { document.getElementById('modalOverlay').classList.add('hidden'); }
+
+  function showStatsModal() {
+    const s = loadStats();
+    const fmtTime = t => t === null ? '--:--' : `${Math.floor(t / 60).toString().padStart(2, '0')}:${(t % 60).toString().padStart(2, '0')}`;
+    openModal(`
+      <h2>Statistics</h2>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="num">${s.gamesPlayed}</div><div class="lbl">Played</div></div>
+        <div class="stat-card"><div class="num">${s.gamesWon}</div><div class="lbl">Won</div></div>
+        <div class="stat-card"><div class="num">${s.gamesPlayed ? Math.round(100 * s.gamesWon / s.gamesPlayed) : 0}%</div><div class="lbl">Win Rate</div></div>
+        <div class="stat-card"><div class="num">${s.bestStreak}</div><div class="lbl">Best Streak</div></div>
+        <div class="stat-card"><div class="num">${fmtTime(s.bestTime)}</div><div class="lbl">Best Time</div></div>
+        <div class="stat-card"><div class="num">${s.bestScore ?? 0}</div><div class="lbl">Best Score</div></div>
+      </div>
+    `);
+  }
+
+  function showHowToModal() {
+    openModal(`
+      <h2>How To Play</h2>
+      <p>Build tableau piles in descending order, alternating colors. Move Kings to empty columns.</p>
+      <p>Build the four foundation piles up from Ace to King, one suit each.</p>
+      <p>Tap the stock pile to draw cards. Drag cards or double-tap them to move automatically.</p>
+      <p>Use Undo to reverse moves and Hint if you get stuck. Complete all four foundations to win!</p>
+    `);
+  }
+
+  function showWinModal() {
+    openModal(`
+      <div class="win-title">🎉 You Won!</div>
+      <div class="win-sub">Score ${Math.max(0,game.score)} · ${game.moves} moves · ${document.getElementById('hudTime').textContent}</div>
+      <div class="modal-actions">
+        <button class="menu-btn primary" id="btnWinNewGame">New Game</button>
+      </div>
+    `);
+    document.getElementById('btnWinNewGame').addEventListener('click', () => {
+      closeModal();
+      dealNewGame(false);
+    });
+  }
+
+  /* ---------------------------------------------------------
+     EVENT WIRING
+  --------------------------------------------------------- */
+  function wireEvents() {
+    cardLayerEl.addEventListener('pointerdown', onPointerDown);
+    cardLayerEl.addEventListener('dblclick', onDblClick);
+    boardEl.addEventListener('click', onSlotClick);
+
+    document.getElementById('btnMenu').addEventListener('click', openMenu);
+    document.getElementById('btnCloseMenu').addEventListener('click', closeMenu);
+    document.getElementById('menuOverlay').addEventListener('click', e => { if (e.target.id === 'menuOverlay') closeMenu(); });
+
+    document.getElementById('btnModalClose').addEventListener('click', closeModal);
+    document.getElementById('modalOverlay').addEventListener('click', e => { if (e.target.id === 'modalOverlay') closeModal(); });
+
+    document.getElementById('btnUndo').addEventListener('click', undo);
+    document.getElementById('btnHint').addEventListener('click', showHint);
+    document.getElementById('btnAutoComplete').addEventListener('click', autoCompleteAll);
+
+    document.getElementById('btnNewGame').addEventListener('click', () => {
+      closeMenu();
+      if (game.started && game.moves > 0 && !game.won) recordLoss();
+      dealNewGame(false);
+      showToast('New game started');
+    });
+    document.getElementById('btnRestart').addEventListener('click', () => {
+      closeMenu();
+      dealNewGame(true);
+      showToast('Deal restarted');
+    });
+
+    document.getElementById('btnStats').addEventListener('click', () => { closeMenu(); showStatsModal(); });
+    document.getElementById('btnHowTo').addEventListener('click', () => { closeMenu(); showHowToModal(); });
+
+    document.getElementById('drawModeToggle').addEventListener('click', e => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      const mode = parseInt(btn.dataset.mode, 10);
+      if (mode === game.drawMode) return;
+      [...btn.parentElement.children].forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      game.drawMode = mode;
+      savePrefs();
+      closeMenu();
+      dealNewGame(false);
+      showToast(`Draw ${mode} mode — new game started`);
+    });
+
+    document.getElementById('themeToggle').addEventListener('click', e => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      [...btn.parentElement.children].forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.body.setAttribute('data-theme', btn.dataset.theme);
+      savePrefs();
+    });
+
+    document.getElementById('soundToggle').addEventListener('change', e => {
+      soundEnabled.on = e.target.checked;
+      savePrefs();
+    });
+
+    window.addEventListener('resize', debounce(() => {
+      updateCardSize();
+      requestAnimationFrame(() => { computeSlotPositions(); render(); });
+    }, 120));
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) saveGame();
+    });
+    window.addEventListener('beforeunload', saveGame);
+  }
+
+  function debounce(fn, ms) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  }
+
+  /* ---------------------------------------------------------
+     INIT
+  --------------------------------------------------------- */
+  function init() {
+    boardEl = document.getElementById('board');
+    cardLayerEl = document.getElementById('cardLayer');
+
+    loadPrefs();
+    document.getElementById('soundToggle').checked = soundEnabled.on;
+    const theme = document.body.getAttribute('data-theme');
+    document.querySelectorAll('#themeToggle .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === theme));
+
+    buildAllCards();
+    buildCardDom();
+    updateCardSize();
+    computeSlotPositions();
+    wireEvents();
+
+    document.querySelectorAll('#drawModeToggle .seg-btn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.mode, 10) === game.drawMode));
+
+    const resumed = loadGame();
+    if (resumed) {
+      computeSlotPositions();
+      render();
+      startTimer();
+      showToast('Resumed your game');
+    } else {
+      dealNewGame(false);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+
+})();
